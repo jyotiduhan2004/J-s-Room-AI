@@ -1,0 +1,19 @@
+# env
+.env
+.env.local
+
+# secrets / service account keys
+keysss/
+
+# dependencies
+node_modules/
+__pycache__/
+venv/
+
+# next.js
+.next/
+out/
+
+# misc
+.DS_Store
+*.pyc
