@@ -231,7 +231,7 @@ export default function Home() {
             }
           }
         },
-        getUploadedImage: () => uploadedImageRef.current,
+        getUploadedImage: () => uploadedImageRef.current ?? latestCameraFrameRef.current,
       });
 
       clientRef.current = client;
@@ -371,7 +371,11 @@ export default function Home() {
     setIsMicOn((prev) => !prev);
   }, [isMicOn]);
 
+  const latestCameraFrameRef = useRef<{ base64: string; mimeType: string } | null>(null);
+
   const handleCameraFrame = useCallback((base64: string) => {
+    // Always store the latest frame so preview can use it as fallback
+    latestCameraFrameRef.current = { base64, mimeType: "image/jpeg" };
     if (!pauseCameraFramesRef.current) {
       clientRef.current?.sendImage(base64);
     }
