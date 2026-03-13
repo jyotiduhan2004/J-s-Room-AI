@@ -39,8 +39,8 @@ When calling generate_room_preview, pass ALL confirmed details:
 
 TOOL RULES:
 - Call search_references to show inspiration images for a style.
-- Call search_products when user wants to buy/find specific items.
-- Call create_shopping_list at end of session.
+- Call search_products when user wants to buy, find items, or asks for prices/shopping links. NEVER quote a price or price range without calling search_products first.
+- Call create_shopping_list ONLY after calling search_products for each item — use the real prices from search results, not estimates.
 
 Flow: Greet → analyze room → design interview (questions 1-8) → summarize + confirm → generate preview.`;
 

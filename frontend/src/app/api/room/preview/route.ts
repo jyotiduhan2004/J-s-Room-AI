@@ -31,14 +31,16 @@ export async function POST(req: NextRequest) {
   const visionPrompt = hasStructuredChanges
     ? `You are an interior design expert and image prompt writer.
 
-Analyze this room photo carefully. First, identify and note:
-- Exact room layout and camera angle/perspective
-- Position of EVERY fixed element: window (which wall, which side), door, AC unit, TV, bed, desk with PC, wardrobe, posters, any built-in features
-- Current wall color, floor type, ceiling
+STEP 1 — ROOM INVENTORY (do this first):
+Look at the photo and list every visible object with its exact position:
+- Each piece of furniture (chairs, desks, tables, beds, sofas) — where exactly in the room
+- Fixed elements (windows, doors, AC, TV) — which wall
+- Decor (posters, plants, shelves) — where
+- Current colors, materials, flooring, ceiling
 
-Now write a SINGLE detailed image generation prompt (5-7 sentences) showing this EXACT SAME room redesigned with ONLY the following changes:
+STEP 2 — Write ONE image generation prompt (5-7 sentences) showing this EXACT room with only these changes:
 
-CHANGES TO APPLY:
+CHANGES:
 ${changes.map((c: string, i: number) => `${i + 1}. ${c}`).join("\n")}
 ${style ? `\nSTYLE: ${style}` : ""}
 ${colorPalette ? `\nCOLOR PALETTE: ${colorPalette}` : ""}
@@ -46,25 +48,25 @@ ${wall_color ? `\nWALL COLOR: ${wall_color}` : ""}
 ${ceiling ? `\nCEILING: ${ceiling}` : ""}
 ${floor ? `\nFLOOR: ${floor}` : ""}
 ${lighting ? `\nLIGHTING: ${lighting}` : ""}
-${keep.length > 0 ? `\nKEEP EXACTLY AS-IS (do not move or remove): ${keep.join(", ")}` : ""}
+${keep.length > 0 ? `\nMUST KEEP in exact same position and appearance: ${keep.join(", ")}` : ""}
 
-CRITICAL RULES — failure to follow = wrong output:
-1. IDENTICAL camera angle, perspective, and room geometry as the original photo
-2. Window stays on the SAME wall and SAME side as in the photo
-3. Bed, desk, AC, TV, wardrobe stay in EXACT same positions — do NOT rearrange furniture
-4. Only change: colors, fabrics, textures, decorative accessories, lighting fixtures
-5. Describe every fixed element explicitly in its original position (e.g. "AC unit on the right wall, TV mounted on the left wall")
-6. Name each change explicitly (e.g. "white linen duvet replacing the red bedspread")
-7. End with: "Same room layout and perspective as reference photo, professional interior photography, high resolution, warm natural lighting, magazine quality"
+RULES:
+1. Same camera angle, perspective, room shape, and dimensions
+2. Every item from STEP 1 inventory MUST appear in the prompt at its original position — unless it's explicitly in CHANGES
+3. Items in the KEEP list must be described exactly as they appear ("the existing black office chairs in the same positions")
+4. Only apply the listed CHANGES — nothing else moves, disappears, or gets replaced
+5. Name each change explicitly (e.g. "light wood flooring replacing the current dark tiles")
+6. End with: "Photorealistic interior, same room layout and camera angle as the reference, high resolution, natural lighting"
 
-Write ONLY the image generation prompt. Start with "A redesigned [room type] with identical layout to the reference..."`
+Write ONLY the prompt. Start with "The same [room type] from the reference photo, redesigned..."`
     : `You are an interior design expert. Analyze this room photo.
 
-Write a detailed image generation prompt (5-7 sentences) showing it redesigned in ${style || styleContext || "modern minimalist"} style, keeping the EXACT same camera angle, room layout, and furniture positions.
+First inventory every visible object and its position. Then write a detailed image generation prompt (5-7 sentences) showing it redesigned in ${style || styleContext || "modern minimalist"} style.
 
-Include: room type, every major furniture piece in its original position, new color scheme (${colorPalette || "warm neutrals"}), materials, lighting, decor accessories.
-End with: "Same room layout and perspective as reference photo, professional interior photography, high resolution, warm natural lighting, magazine quality"
-Write ONLY the prompt. Start with "A redesigned [room type] with identical layout to the reference..."`;
+Every piece of furniture must stay in its exact original position. Only change colors, materials, and decor.
+Include: room type, every visible furniture piece described in its position, new color scheme (${colorPalette || "warm neutrals"}), materials, lighting, decor.
+End with: "Photorealistic interior, same room layout and camera angle as the reference, high resolution, natural lighting"
+Write ONLY the prompt. Start with "The same [room type] from the reference photo, redesigned..."`;
 
   try {
     // Step 1: Gemini 2.5 Flash analyzes room + builds targeted image prompt
