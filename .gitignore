@@ -5,6 +5,11 @@
 # secrets / service account keys
 keysss/
 
+# internal reference only
+docs/
+context/
+PROJECT_PLAN.md
+
 # dependencies
 node_modules/
 __pycache__/
