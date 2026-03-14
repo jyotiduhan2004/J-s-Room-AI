@@ -4,7 +4,7 @@ A voice-first AI interior designer that sees your room, talks to you about redes
 
 **Category:** Live Agents | **Hackathon:** Gemini Live Agent Challenge
 
-![Architecture](../architecture%20and%20text/architecture-diagram.svg)
+![Architecture](architecture-diagram.png)
 
 ---
 
