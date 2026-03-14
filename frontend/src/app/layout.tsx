@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "J's Room AI — Live AI Interior Designer",
+  title: "Live Room AI — AI Interior Designer",
   description:
-    "Show your room, talk about your style, get a shopping list. Powered by Gemini Live API.",
+    "Live voice AI interior designer. Show your room, choose a style, get a shopping list. Powered by Gemini Live & Imagen.",
 };
 
 export default function RootLayout({
@@ -13,8 +13,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" className="dark">
+      <body className="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display">
+        {children}
+      </body>
     </html>
   );
 }
