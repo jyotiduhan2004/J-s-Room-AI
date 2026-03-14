@@ -1,691 +1,548 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState } from "react";
+import AppShell from "@/components/AppShell";
 import CameraFeed from "@/components/CameraFeed";
 import ChatPanel from "@/components/ChatPanel";
-import ControlBar from "@/components/ControlBar";
-import StatusIndicator from "@/components/StatusIndicator";
+import VoiceIndicator from "@/components/VoiceIndicator";
+import RoomUploader from "@/components/RoomUploader";
+import DesignBrief from "@/components/DesignBrief";
+import BeforeAfterSlider from "@/components/BeforeAfterSlider";
 import ReferenceGallery from "@/components/ReferenceGallery";
-import StyleSelector from "@/components/StyleSelector";
 import ProductGallery from "@/components/ProductGallery";
-import ShoppingList, { type ShoppingItem } from "@/components/ShoppingList";
-import {
-  GeminiLiveClient,
-  type TranscriptEntry,
-} from "@/lib/gemini-live";
-import { AudioStreamer } from "@/lib/audio-streamer";
+import SavedItemsList from "@/components/SavedItemsList";
+import LandingBackground from "@/components/LandingBackground";
+import { useSession } from "@/context/SessionContext";
 
-/** Max session duration in seconds (10 minutes) */
-const MAX_SESSION_SEC = 10 * 60;
+/* ── Landing Page ── */
 
-export default function Home() {
-  const [isConnected, setIsConnected] = useState(false);
-  const [referenceImages, setReferenceImages] = useState<any[]>([]);
-  const [isCameraOn, setIsCameraOn] = useState(false);
-  const [isMicOn, setIsMicOn] = useState(true);
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [sessionElapsed, setSessionElapsed] = useState(0);
-  // Chat/reference resize (percentage of right panel height given to chat)
-  const [chatHeightPct, setChatHeightPct] = useState(60);
-  const isDraggingRef = useRef(false);
-  const dragStartYRef = useRef(0);
-  const dragStartPctRef = useRef(60);
-  const rightPanelRef = useRef<HTMLDivElement>(null);
-
-  const [products, setProducts] = useState<any[]>([]);
-  const [shoppingList, setShoppingList] = useState<ShoppingItem[]>([]);
-  const [activeTab, setActiveTab] = useState<"chat" | "shopping">("chat");
-  const [uploadedImage, setUploadedImage] = useState<{ base64: string; mimeType: string; previewUrl: string } | null>(null);
-  const [roomPreview, setRoomPreview] = useState<{ imageBase64: string; mimeType: string; changes?: string[] } | null>(null);
-  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [previewCountdown, setPreviewCountdown] = useState(0);
-  const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [styleContext, setStyleContext] = useState<string>("");
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const uploadedImageRef = useRef<{ base64: string; mimeType: string } | null>(null);
-
-  const clientRef = useRef<GeminiLiveClient | null>(null);
-  const pauseCameraFramesRef = useRef(false);
-  const audioRef = useRef<AudioStreamer | null>(null);
-  const speakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Session timer
-  useEffect(() => {
-    if (isConnected) {
-      setSessionElapsed(0);
-      timerRef.current = setInterval(() => {
-        setSessionElapsed((prev) => prev + 1);
-      }, 1000);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [isConnected]);
-
-  // Auto-disconnect at limit
-  useEffect(() => {
-    if (sessionElapsed >= MAX_SESSION_SEC && isConnected) {
-      clientRef.current?.disconnect();
-      audioRef.current?.destroy();
-      clientRef.current = null;
-      audioRef.current = null;
-      setIsConnected(false);
-      setIsCameraOn(false);
-      setIsMicOn(true);
-      setIsSpeaking(false);
-      setError("Session ended — 10 minute limit reached (budget protection)");
-    }
-  }, [sessionElapsed, isConnected]);
-
-  const formatTime = (sec: number) => {
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  };
-
-  const handleTranscriptStream = useCallback(
-    (role: "user" | "agent", fullText: string) => {
-      setTranscript((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.role === role && Date.now() - last.timestamp < 30000) {
-          return [...prev.slice(0, -1), { ...last, text: fullText }];
-        }
-        return [...prev, { role, text: fullText, timestamp: Date.now() }];
-      });
-    },
-    []
-  );
-
-  const handleTurnComplete = useCallback(() => {
-    setTranscript((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      return [...prev.slice(0, -1), { ...last, timestamp: 0 }];
-    });
-  }, []);
-
-  const addTranscript = useCallback((entry: TranscriptEntry) => {
-    setTranscript((prev) => [...prev, entry]);
-  }, []);
-
-  const handleInterrupted = useCallback(() => {
-    // User interrupted — stop AI audio immediately
-    audioRef.current?.stopPlayback();
-    setIsSpeaking(false);
-    if (speakingTimeoutRef.current) clearTimeout(speakingTimeoutRef.current);
-  }, []);
-
-  const disconnectSession = useCallback(() => {
-    clientRef.current?.disconnect();
-    audioRef.current?.destroy();
-    clientRef.current = null;
-    audioRef.current = null;
-    setIsConnected(false);
-    setIsCameraOn(false);
-    setIsMicOn(true);
-    setIsSpeaking(false);
-    pauseCameraFramesRef.current = false;
-    if (speakingTimeoutRef.current) clearTimeout(speakingTimeoutRef.current);
-  }, []);
-
-  const handleToggleSession = useCallback(async () => {
-    if (isConnected) {
-      disconnectSession();
-      return;
-    }
-
-    setIsConnecting(true);
-    setError(null);
-
-    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-    if (!apiKey) {
-      setError("Gemini API key not configured");
-      setIsConnecting(false);
-      return;
-    }
-
-    try {
-      const audio = new AudioStreamer();
-      audioRef.current = audio;
-
-      const client = new GeminiLiveClient(apiKey, {
-        onAudioOutput: (audioData) => {
-          audio.playAudio(audioData);
-          setIsSpeaking(true);
-          if (speakingTimeoutRef.current) clearTimeout(speakingTimeoutRef.current);
-          speakingTimeoutRef.current = setTimeout(() => setIsSpeaking(false), 800);
-        },
-        onTranscript: addTranscript,
-        onTranscriptStream: handleTranscriptStream,
-        onTurnComplete: handleTurnComplete,
-        onInterrupted: handleInterrupted,
-        onConnectionChange: (connected) => {
-          setIsConnected(connected);
-          if (connected) {
-            setIsCameraOn(true);
-          }
-        },
-        onError: (err) => {
-          setError(err);
-          console.error("Gemini error:", err);
-        },
-        onToolResult: (toolName, result) => {
-          if (toolName === "search_references" && result.images) {
-            setReferenceImages(result.images);
-          }
-          if (toolName === "search_products" && result.products) {
-            setProducts(result.products);
-            setActiveTab("shopping");
-          }
-          if (toolName === "create_shopping_list" && result.items) {
-            const newItems: ShoppingItem[] = result.items.map((item: any) => ({
-              title: item.name,
-              price: item.estimated_price,
-              source: "Recommended",
-              link: "",
-            }));
-            setShoppingList((prev) => [...prev, ...newItems]);
-            setActiveTab("shopping");
-          }
-          if (toolName === "generate_room_preview" && result.generating) {
-            setIsGeneratingPreview(true);
-            setPreviewError(null);
-            setRoomPreview(null);  // clear old preview so spinner shows
-            setActiveTab("shopping");
-            // Start countdown from 20s
-            setPreviewCountdown(20);
-            if (previewTimerRef.current) clearInterval(previewTimerRef.current);
-            previewTimerRef.current = setInterval(() => {
-              setPreviewCountdown((c) => {
-                if (c <= 1) {
-                  clearInterval(previewTimerRef.current!);
-                  previewTimerRef.current = null;
-                  return 0;
-                }
-                return c - 1;
-              });
-            }, 1000);
-          }
-          if (toolName === "generate_room_preview_done") {
-            setIsGeneratingPreview(false);
-            setPreviewCountdown(0);
-            if (previewTimerRef.current) { clearInterval(previewTimerRef.current); previewTimerRef.current = null; }
-            if (result.imageBase64) {
-              setRoomPreview({ imageBase64: result.imageBase64, mimeType: result.mimeType ?? "image/png", changes: result.changes });
-              if (result.style) setStyleContext(result.style);
-              setActiveTab("shopping");
-            } else {
-              setPreviewError(result.error ?? "Preview generation failed");
-              setActiveTab("shopping");
-            }
-          }
-        },
-        getUploadedImage: () => uploadedImageRef.current ?? latestCameraFrameRef.current,
-      });
-
-      clientRef.current = client;
-      await client.connect();
-
-      await audio.startRecording((base64Audio) => {
-        client.sendAudio(base64Audio);
-      });
-    } catch (err: any) {
-      setError(err.message || "Failed to start session");
-      clientRef.current = null;
-      audioRef.current?.destroy();
-      audioRef.current = null;
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [isConnected, disconnectSession, addTranscript, handleTranscriptStream, handleTurnComplete, handleInterrupted]);
-
-  const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const mimeType = file.type || "image/jpeg";
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      const base64 = dataUrl.split(",")[1];
-      setUploadedImage({ base64, mimeType, previewUrl: dataUrl });
-      uploadedImageRef.current = { base64, mimeType };
-      setRoomPreview(null);
-      setPreviewError(null);
-      // Pause live camera frames so they don't override the uploaded image context
-      pauseCameraFramesRef.current = true;
-      // Send as a proper clientContent message with text instruction
-      if (clientRef.current) {
-        clientRef.current.sendImageMessage(base64, mimeType);
-      }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
-  }, []);
-
-  const handleRemoveUploadedImage = useCallback(() => {
-    setUploadedImage(null);
-    uploadedImageRef.current = null;
-    setRoomPreview(null);
-    setPreviewError(null);
-    pauseCameraFramesRef.current = false;
-  }, []);
-
-  const handleGeneratePreview = useCallback(async () => {
-    if (!uploadedImage) return;
-    setIsGeneratingPreview(true);
-    setPreviewError(null);
-    setActiveTab("shopping");
-    setPreviewCountdown(20);
-    if (previewTimerRef.current) clearInterval(previewTimerRef.current);
-    previewTimerRef.current = setInterval(() => {
-      setPreviewCountdown((c) => {
-        if (c <= 1) { clearInterval(previewTimerRef.current!); previewTimerRef.current = null; return 0; }
-        return c - 1;
-      });
-    }, 1000);
-    try {
-      const res = await fetch("/api/room/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageBase64: uploadedImage.base64,
-          mimeType: uploadedImage.mimeType,
-          styleContext: styleContext || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (data.imageBase64) {
-        setRoomPreview({ imageBase64: data.imageBase64, mimeType: data.mimeType ?? "image/png" });
-        setActiveTab("shopping");
-      } else if (data.description) {
-        setPreviewError("Preview: " + data.description);
-      } else {
-        setPreviewError(data.error ?? "Failed to generate preview");
-      }
-    } catch {
-      setPreviewError("Failed to generate room preview");
-    } finally {
-      setIsGeneratingPreview(false);
-      setPreviewCountdown(0);
-      if (previewTimerRef.current) { clearInterval(previewTimerRef.current); previewTimerRef.current = null; }
-    }
-  }, [uploadedImage, styleContext]);
-
-  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDraggingRef.current = true;
-    dragStartYRef.current = e.clientY;
-    dragStartPctRef.current = chatHeightPct;
-
-    const onMove = (ev: MouseEvent) => {
-      if (!isDraggingRef.current || !rightPanelRef.current) return;
-      const panelH = rightPanelRef.current.getBoundingClientRect().height;
-      const delta = ev.clientY - dragStartYRef.current;
-      const deltaPct = (delta / panelH) * 100;
-      setChatHeightPct(Math.min(80, Math.max(20, dragStartPctRef.current + deltaPct)));
-    };
-    const onUp = () => {
-      isDraggingRef.current = false;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }, [chatHeightPct]);
-
-  const handleAddToList = useCallback((product: ShoppingItem) => {
-    setShoppingList((prev) => [...prev, product]);
-  }, []);
-
-  const handleRemoveFromList = useCallback((index: number) => {
-    setShoppingList((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const handleClearList = useCallback(() => {
-    setShoppingList([]);
-  }, []);
-
-  const handleToggleCamera = useCallback(() => {
-    setIsCameraOn((prev) => !prev);
-  }, []);
-
-  const handleToggleMic = useCallback(() => {
-    if (isMicOn) {
-      audioRef.current?.stopRecording();
-    } else {
-      audioRef.current?.startRecording((base64Audio) => {
-        clientRef.current?.sendAudio(base64Audio);
-      });
-    }
-    setIsMicOn((prev) => !prev);
-  }, [isMicOn]);
-
-  const latestCameraFrameRef = useRef<{ base64: string; mimeType: string } | null>(null);
-
-  const handleCameraFrame = useCallback((base64: string) => {
-    // Always store the latest frame so preview can use it as fallback
-    latestCameraFrameRef.current = { base64, mimeType: "image/jpeg" };
-    if (!pauseCameraFramesRef.current) {
-      clientRef.current?.sendImage(base64);
-    }
-  }, []);
-
-  const timeRemaining = MAX_SESSION_SEC - sessionElapsed;
-  const isLowTime = timeRemaining <= 60 && isConnected;
+function LandingPage() {
+  const { state, actions, dispatch } = useSession();
 
   return (
-    <main className="h-dvh flex flex-col md:flex-row bg-zinc-950">
-      {/* Left: Camera + Controls */}
-      <div className="flex flex-col md:w-1/2 lg:w-3/5">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-          <div>
-            <h1 className="text-lg font-semibold text-white">
-              J&apos;s Room AI
-            </h1>
-            <p className="text-xs text-zinc-500">Live AI Interior Designer</p>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* Session timer */}
-            {isConnected && (
-              <div
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono ${
-                  isLowTime
-                    ? "bg-red-950 text-red-400 ring-1 ring-red-800"
-                    : "bg-zinc-800 text-zinc-400"
-                }`}
-              >
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-                {formatTime(sessionElapsed)} / {formatTime(MAX_SESSION_SEC)}
-              </div>
-            )}
-            <StatusIndicator
-              status={
-                isConnecting
-                  ? "connecting"
-                  : isSpeaking
-                    ? "speaking"
-                    : isConnected
-                      ? "listening"
-                      : "offline"
-              }
-            />
-          </div>
+    <div className="relative flex-1 flex flex-col items-center justify-center px-4 py-6 sm:p-6 lg:p-12 overflow-hidden">
+      {/* Animated background */}
+      <LandingBackground />
+
+      {/* Content */}
+      <div className="relative z-10 w-full max-w-xl mx-auto space-y-6 sm:space-y-8 animate-fade-in">
+        {/* Hero */}
+        <div className="text-center space-y-2 sm:space-y-3">
+          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-900 dark:text-white tracking-tight">
+            Design your space with AI
+          </h2>
+          <p className="text-slate-500 dark:text-slate-400 text-sm sm:text-base">
+            Upload a room photo, capture with camera, or just describe it
+          </p>
         </div>
 
-        {/* Camera */}
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl">
-            <CameraFeed
-              isActive={isCameraOn}
-              onFrame={handleCameraFrame}
-              intervalSec={5}
-            />
-          </div>
+        {/* Upload zone */}
+        <div className="backdrop-blur-sm bg-white/60 dark:bg-slate-900/60 rounded-2xl p-1 border border-slate-200/50 dark:border-slate-700/50 shadow-xl shadow-slate-200/20 dark:shadow-black/20">
+          <RoomUploader variant="dropzone" onUpload={actions.handleImageFile} />
         </div>
 
-        {/* Image upload */}
-        <div className="px-4 py-2 flex flex-col gap-2">
+        {/* Divider */}
+        <div className="flex items-center gap-4">
+          <div className="flex-1 h-px bg-slate-300/50 dark:bg-slate-600/50" />
+          <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">or</span>
+          <div className="flex-1 h-px bg-slate-300/50 dark:bg-slate-600/50" />
+        </div>
+
+        {/* Voice session CTA */}
+        <div className="text-center space-y-2">
+          <button
+            onClick={() => {
+              dispatch({ type: "SET_PHASE", phase: "active" });
+              actions.toggleSession(false);
+            }}
+            className="inline-flex items-center gap-2.5 px-5 sm:px-6 py-3 backdrop-blur-sm bg-white/70 dark:bg-slate-800/70 hover:bg-white/90 dark:hover:bg-slate-700/90 text-slate-700 dark:text-slate-200 rounded-xl text-sm font-semibold transition-all border border-slate-200/50 dark:border-slate-700/50 shadow-lg shadow-slate-200/10 dark:shadow-black/10 active:scale-95"
+          >
+            <span className="material-symbols-outlined !text-lg text-primary">mic</span>
+            Start a voice session
+          </button>
+          <p className="text-xs text-slate-400 dark:text-slate-500">
+            Use your camera to show your room live
+          </p>
+        </div>
+
+        {/* Or just type */}
+        <div className="flex items-center gap-2 backdrop-blur-sm bg-white/70 dark:bg-slate-800/60 rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200/50 dark:border-slate-700/50 shadow-lg shadow-slate-200/10 dark:shadow-black/10">
+          <span className="material-symbols-outlined text-slate-400 !text-lg sm:!text-xl">chat</span>
           <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleImageUpload}
+            type="text"
+            value={state.chatInput}
+            onChange={(e) => dispatch({ type: "SET_CHAT_INPUT", value: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && state.chatInput.trim()) {
+                dispatch({ type: "SET_PHASE", phase: "active" });
+                actions.sendChat();
+              }
+            }}
+            placeholder="Describe your room or ask a question..."
+            className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none text-sm py-1 placeholder-slate-400 text-slate-900 dark:text-slate-100 min-w-0"
           />
-          {uploadedImage ? (
-            <div className="flex flex-col gap-1.5 bg-zinc-900 border border-zinc-700 rounded-lg p-2">
-              <div className="flex items-center gap-2">
-                <img
-                  src={uploadedImage.previewUrl}
-                  alt="Uploaded room"
-                  className="w-12 h-10 object-cover rounded flex-shrink-0"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-zinc-300">Room photo uploaded</p>
-                  <p className="text-[10px] text-zinc-500">AI is analyzing this image</p>
+          <button
+            onClick={() => {
+              if (state.chatInput.trim()) {
+                dispatch({ type: "SET_PHASE", phase: "active" });
+                actions.sendChat();
+              }
+            }}
+            disabled={!state.chatInput.trim()}
+            className="p-2 rounded-lg bg-primary text-white hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 active:scale-95"
+          >
+            <span className="material-symbols-outlined !text-lg">send</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Workspace: Visual Panel (right side) ── */
+
+function VisualWorkspace() {
+  const { state, actions, dispatch } = useSession();
+  const isConnected = state.connectionStatus === "connected";
+
+  const confirmedCount = state.designChoices.filter((c) => c.confirmed).length;
+
+  // Determine workspace stage
+  const hasPreview = !!state.currentPreview;
+  const isGenerating = state.previewStatus === "generating";
+  const hasProducts = state.searchResults.length > 0 || state.savedItems.length > 0;
+
+  return (
+    <div className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-4 sm:space-y-5 no-scrollbar bg-slate-50/50 dark:bg-slate-950/30">
+      {/* Room photo hero */}
+      {state.uploadedImage && (
+        <div className="bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+          {hasPreview ? (
+            <BeforeAfterSlider
+              beforeSrc={state.uploadedImage.previewUrl}
+              afterSrc={`data:${state.currentPreview!.mimeType};base64,${state.currentPreview!.imageBase64}`}
+              beforeLabel="Original"
+              afterLabel={state.styleContext ? `${state.styleContext} Style` : "AI Redesign"}
+            />
+          ) : isGenerating ? (
+            <div className="relative aspect-video">
+              <img
+                src={state.uploadedImage.previewUrl}
+                alt="Room"
+                className="w-full h-full object-cover blur-sm opacity-50 scale-[1.02]"
+              />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 sm:gap-4 bg-black/30">
+                <div className="relative">
+                  <div className="size-10 sm:size-12 rounded-full border-2 border-white/20 border-t-primary animate-spin" />
+                  <span className="material-symbols-outlined text-white !text-lg sm:!text-xl absolute inset-0 flex items-center justify-center">auto_awesome</span>
                 </div>
-                <button
-                  onClick={() => {
-                    if (isConnected && clientRef.current && uploadedImage) {
-                      clientRef.current.sendImageMessage(uploadedImage.base64, uploadedImage.mimeType);
-                    }
-                  }}
-                  className="text-[10px] text-violet-400 hover:text-violet-300 px-1.5 py-0.5 rounded hover:bg-violet-900/30 transition-colors flex-shrink-0"
-                  disabled={!isConnected}
-                >
-                  Re-analyze
-                </button>
-                <button
-                  onClick={handleRemoveUploadedImage}
-                  className="text-zinc-500 hover:text-zinc-300 text-sm flex-shrink-0 w-5 h-5 flex items-center justify-center"
-                >
-                  ×
-                </button>
+                <div className="space-y-1.5 sm:space-y-2 text-center px-4">
+                  <p className="text-xs sm:text-sm font-semibold text-white drop-shadow">Generating your redesign</p>
+                  <p className="text-[10px] sm:text-xs text-white/60">This usually takes 10-15 seconds</p>
+                </div>
+                <div className="h-1 w-40 sm:w-56 rounded-full overflow-hidden bg-white/15">
+                  <div className="h-full w-full bg-gradient-to-r from-primary/50 via-primary to-primary/50 animate-shimmer bg-[length:200%_100%]" />
+                </div>
               </div>
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  placeholder="Style (e.g. Scandinavian, Bohemian, Modern...)"
-                  value={styleContext}
-                  onChange={(e) => setStyleContext(e.target.value)}
-                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-violet-600"
-                />
-                <button
-                  onClick={handleGeneratePreview}
-                  disabled={isGeneratingPreview}
-                  className="px-2.5 py-1 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[10px] font-medium rounded transition-colors whitespace-nowrap"
-                >
-                  {isGeneratingPreview ? "Generating..." : "Preview Room"}
-                </button>
-              </div>
-              {previewError && (
-                <p className="text-[10px] text-red-400">{previewError}</p>
-              )}
             </div>
           ) : (
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-dashed border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900 transition-colors text-zinc-500 hover:text-zinc-300 text-xs w-full"
-            >
-              <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
-              </svg>
-              Upload room photo for AI analysis + preview
-            </button>
+            <div className="relative">
+              <img
+                src={state.uploadedImage.previewUrl}
+                alt="Your room"
+                className="w-full aspect-video object-cover"
+              />
+              <div className="absolute top-2 sm:top-3 left-2 sm:left-3 bg-slate-900/70 text-white text-[9px] sm:text-[10px] font-bold px-2 py-1 rounded uppercase tracking-widest">
+                Your Room
+              </div>
+              <button
+                onClick={actions.removeUploadedImage}
+                className="absolute top-2 sm:top-3 right-2 sm:right-3 p-1.5 rounded-full bg-slate-900/50 text-white/80 hover:text-white hover:bg-slate-900/70 transition-colors active:scale-90"
+              >
+                <span className="material-symbols-outlined !text-sm">close</span>
+              </button>
+              {/* Analyzing overlay */}
+              {state.isImageAnalyzing && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 sm:gap-3 bg-black/40 backdrop-blur-[2px]">
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-white !text-xl sm:!text-2xl animate-spin">progress_activity</span>
+                  </div>
+                  <div className="h-1 w-36 sm:w-48 rounded-full overflow-hidden bg-white/20">
+                    <div className="h-full w-full bg-gradient-to-r from-transparent via-white to-transparent animate-shimmer bg-[length:200%_100%]" />
+                  </div>
+                  <p className="text-xs sm:text-sm font-medium text-white drop-shadow">Analyzing your room...</p>
+                  <p className="text-[10px] sm:text-xs text-white/60">AI is identifying furniture, colors & layout</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Preview actions */}
+          {hasPreview && (
+            <div className="p-2.5 sm:p-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5 sm:space-y-3">
+              {/* Changes applied */}
+              {state.currentPreview?.changes && state.currentPreview.changes.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[10px] sm:text-xs font-medium text-slate-500 dark:text-slate-400">Changes applied:</p>
+                  <div className="flex flex-wrap gap-1 sm:gap-1.5">
+                    {state.currentPreview.changes.slice(0, 5).map((c, i) => (
+                      <span key={i} className="text-[10px] sm:text-xs bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 px-1.5 sm:px-2 py-0.5 rounded-full">
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <a
+                  href={`data:${state.currentPreview!.mimeType};base64,${state.currentPreview!.imageBase64}`}
+                  download="room-redesign.png"
+                  className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors active:scale-95"
+                >
+                  <span className="material-symbols-outlined !text-sm">download</span>
+                  Download
+                </a>
+                <button
+                  onClick={actions.generatePreview}
+                  disabled={isGenerating}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-medium text-primary hover:bg-primary/10 dark:hover:bg-primary/20 rounded-lg transition-colors disabled:opacity-50 active:scale-95"
+                >
+                  <span className="material-symbols-outlined !text-sm">refresh</span>
+                  Regenerate
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Preview error */}
+          {state.previewError && (
+            <div className="flex items-center gap-2 px-3 py-2 text-xs text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border-t border-red-100 dark:border-red-900/30">
+              <span className="material-symbols-outlined !text-sm">error</span>
+              <span className="line-clamp-2">{state.previewError}</span>
+            </div>
           )}
         </div>
+      )}
 
-        {/* Style presets */}
-        <StyleSelector
-          onStyleSelect={(text) => clientRef.current?.sendText(text)}
+      {/* Generate preview button (only when uploaded but no preview) */}
+      {state.uploadedImage && !hasPreview && !isGenerating && (
+        <div className="bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 p-3 sm:p-4">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Style (e.g. Scandinavian, Bohemian...)"
+              value={state.styleContext}
+              onChange={(e) => dispatch({ type: "SET_STYLE_CONTEXT", value: e.target.value })}
+              className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/40 min-w-0"
+            />
+            <button
+              onClick={actions.generatePreview}
+              className="px-3 sm:px-4 py-2 bg-primary hover:bg-primary/90 text-white text-sm font-semibold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 shrink-0 active:scale-95"
+            >
+              <span className="material-symbols-outlined !text-base">auto_awesome</span>
+              <span className="hidden sm:inline">Preview</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Upload zone (when no image) */}
+      {!state.uploadedImage && (
+        <RoomUploader variant="compact" onUpload={actions.handleImageFile} />
+      )}
+
+      {/* Design Brief */}
+      {confirmedCount > 0 && (
+        <DesignBrief
+          choices={state.designChoices}
+          onEdit={actions.editDesignChoice}
           disabled={!isConnected}
         />
+      )}
 
-        {/* Error */}
-        {error && (
-          <div className="mx-4 mb-2 px-3 py-2 bg-red-950 border border-red-800 rounded-lg text-red-300 text-xs">
-            {error}
-          </div>
-        )}
+      {/* Reference images */}
+      {state.referenceImages.length > 0 && (
+        <ReferenceGallery images={state.referenceImages} />
+      )}
 
-        {/* Controls */}
-        <ControlBar
-          isConnected={isConnected}
-          isCameraOn={isCameraOn}
-          isMicOn={isMicOn}
-          onToggleSession={handleToggleSession}
-          onToggleCamera={handleToggleCamera}
-          onToggleMic={handleToggleMic}
+      {/* Find products CTA — after preview, before products load */}
+      {hasPreview && !hasProducts && (
+        <button
+          onClick={() => {
+            if (isConnected) {
+              actions.sendMessage("Now find me affordable products for this redesign on Indian shopping sites. Search for ALL the key items — furniture, decor, lighting, textiles, rugs — everything needed to achieve this design. Search for each category separately.");
+            }
+          }}
+          disabled={!isConnected || state.isAiTyping}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 sm:py-3 bg-primary/10 dark:bg-primary/15 hover:bg-primary/20 dark:hover:bg-primary/25 border border-primary/20 dark:border-primary/30 rounded-xl sm:rounded-2xl text-primary text-xs sm:text-sm font-semibold transition-colors disabled:opacity-50 active:scale-[0.98]"
+        >
+          {state.isAiTyping ? (
+            <>
+              <span className="material-symbols-outlined !text-lg animate-spin">progress_activity</span>
+              Searching for products...
+            </>
+          ) : (
+            <>
+              <span className="material-symbols-outlined !text-lg">shopping_bag</span>
+              Find products for this design
+            </>
+          )}
+        </button>
+      )}
+
+      {/* Products & saved items */}
+      {hasProducts && (
+        <div className="bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+          {state.searchResults.length > 0 && (
+            <ProductGallery
+              products={state.searchResults}
+              onSave={actions.addSavedItem}
+              onUnsave={actions.unsaveSavedItem}
+              savedTitles={new Set(state.savedItems.map((i) => i.title))}
+            />
+          )}
+          <SavedItemsList
+            items={state.savedItems}
+            onRemove={actions.removeSavedItem}
+            onClear={actions.clearSavedItems}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Workspace: Conversation Panel (left side) ── */
+
+function ConversationPanel() {
+  const { state, actions, dispatch } = useSession();
+  const isConnected = state.connectionStatus === "connected";
+  const isConnecting = state.connectionStatus === "connecting";
+
+  return (
+    <div className="flex flex-col h-full bg-white dark:bg-slate-950 lg:border-r border-slate-200 dark:border-slate-800">
+      {/* Connection status bar */}
+      {isConnecting && (
+        <div className="flex items-center justify-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800/30 text-amber-700 dark:text-amber-400 text-[11px] sm:text-xs font-medium shrink-0 animate-slide-up">
+          <span className="material-symbols-outlined !text-sm animate-spin">progress_activity</span>
+          Connecting to AI designer...
+        </div>
+      )}
+      {isConnected && state.transcript.length === 0 && (
+        <div className="flex items-center justify-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-200 dark:border-emerald-800/30 text-emerald-700 dark:text-emerald-400 text-[11px] sm:text-xs font-medium shrink-0 animate-slide-up">
+          <div className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          Connected — waiting for AI...
+        </div>
+      )}
+
+      {/* Chat area */}
+      <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+        <ChatPanel
+          transcript={state.transcript}
+          isAiTyping={state.isAiTyping}
         />
       </div>
 
-      {/* Right: Tabbed Panel */}
-      <div ref={rightPanelRef} className="flex flex-col md:w-1/2 lg:w-2/5 border-t md:border-t-0 md:border-l border-zinc-800 h-[40vh] md:h-full">
-        {/* Tab bar */}
-        <div className="flex border-b border-zinc-800 flex-shrink-0">
-          <button
-            onClick={() => setActiveTab("chat")}
-            className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-              activeTab === "chat"
-                ? "text-white border-b-2 border-violet-500"
-                : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            Conversation
-          </button>
-          <button
-            onClick={() => setActiveTab("shopping")}
-            className={`flex-1 py-2.5 text-sm font-medium transition-colors relative ${
-              activeTab === "shopping"
-                ? "text-white border-b-2 border-violet-500"
-                : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            Shopping
-            {shoppingList.length > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-violet-600 text-white text-[10px]">
-                {shoppingList.length}
+      {/* Voice indicator */}
+      {isConnected && state.voiceState !== "idle" && (
+        <div className="px-3 sm:px-4 pb-1.5 sm:pb-2 shrink-0">
+          <VoiceIndicator state={state.voiceState} isMicOn={state.isMicOn} />
+        </div>
+      )}
+
+      {/* Input area */}
+      <div className="p-2 sm:p-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-50 dark:bg-slate-800/80 rounded-xl px-2 sm:px-3 py-1 sm:py-1.5 border border-slate-200 dark:border-slate-700">
+          {/* Attachment */}
+          <RoomUploader variant="button" onUpload={actions.handleImageFile} />
+
+          {/* Text input */}
+          <input
+            type="text"
+            value={state.chatInput}
+            onChange={(e) => dispatch({ type: "SET_CHAT_INPUT", value: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") actions.sendChat();
+            }}
+            placeholder="Message AI designer..."
+            className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none text-sm py-2 placeholder-slate-400 text-slate-900 dark:text-slate-100 min-w-0"
+          />
+
+          {/* Mic button */}
+          {!isConnected ? (
+            <button
+              onClick={() => actions.toggleSession(false)}
+              disabled={isConnecting}
+              className="p-1.5 sm:p-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-emerald-100 hover:text-emerald-600 dark:hover:bg-emerald-900/30 dark:hover:text-emerald-400 transition-all shrink-0 active:scale-90"
+              title="Start voice session"
+            >
+              <span className="material-symbols-outlined !text-lg">
+                {isConnecting ? "progress_activity" : "mic"}
               </span>
-            )}
+            </button>
+          ) : state.isMicOn ? (
+            <button
+              onClick={actions.toggleMic}
+              className="p-1.5 sm:p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-all shrink-0 active:scale-90"
+              title="Mute microphone"
+            >
+              <span className="material-symbols-outlined !text-lg">mic</span>
+            </button>
+          ) : (
+            <button
+              onClick={actions.toggleMic}
+              className="p-1.5 sm:p-2 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-500 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-all shrink-0 active:scale-90"
+              title="Unmute microphone"
+            >
+              <span className="material-symbols-outlined !text-lg">mic_off</span>
+            </button>
+          )}
+
+          {/* End session button (when connected) */}
+          {isConnected && (
+            <button
+              onClick={() => actions.toggleSession()}
+              className="p-1.5 sm:p-2 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-500 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-all shrink-0 active:scale-90"
+              title="End session"
+            >
+              <span className="material-symbols-outlined !text-lg">stop_circle</span>
+            </button>
+          )}
+
+          {/* Send */}
+          <button
+            onClick={actions.sendChat}
+            disabled={!state.chatInput.trim() || isConnecting}
+            className="p-1.5 sm:p-2 rounded-lg bg-primary text-white hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 active:scale-90"
+            title="Send message"
+          >
+            <span className="material-symbols-outlined !text-lg">send</span>
           </button>
         </div>
 
-        {/* Tab content */}
-        {activeTab === "chat" ? (
-          <div className="flex flex-col flex-1 overflow-hidden">
-            {/* Chat section */}
-            <div style={{ height: `${chatHeightPct}%` }} className="overflow-hidden flex flex-col min-h-0">
-              <ChatPanel transcript={transcript} />
-            </div>
-
-            {/* Drag handle — only visible when reference images exist */}
-            {referenceImages.length > 0 && (
-              <div
-                onMouseDown={handleDividerMouseDown}
-                className="flex-shrink-0 h-2 flex items-center justify-center cursor-row-resize group hover:bg-zinc-800/60 transition-colors border-y border-zinc-800 select-none"
-                title="Drag to resize"
-              >
-                <div className="w-8 h-0.5 rounded-full bg-zinc-700 group-hover:bg-violet-500 transition-colors" />
-              </div>
-            )}
-
-            {/* Reference images section */}
-            {referenceImages.length > 0 && (
-              <div style={{ height: `${100 - chatHeightPct}%` }} className="overflow-y-auto min-h-0">
-                <ReferenceGallery images={referenceImages} />
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex-1 overflow-y-auto">
-            {/* Error display */}
-            {previewError && !isGeneratingPreview && (
-              <div className="mx-3 mt-3 px-3 py-2 bg-red-950 border border-red-800 rounded-lg text-red-300 text-xs">
-                {previewError}
-                <button onClick={() => setPreviewError(null)} className="ml-2 text-red-500 hover:text-red-300">×</button>
-              </div>
-            )}
-
-            {/* Preview generating */}
-            {isGeneratingPreview && !roomPreview && (
-              <div className="p-3 border-b border-zinc-800">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
-                    <span className="text-xs text-zinc-300 font-medium">Generating your redesigned room...</span>
-                  </div>
-                  {previewCountdown > 0 && (
-                    <span className="text-[10px] text-zinc-500 tabular-nums">~{previewCountdown}s remaining</span>
-                  )}
-                </div>
-                <div className="aspect-video w-full bg-zinc-900 rounded-lg overflow-hidden relative">
-                  <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-violet-950/30 to-zinc-900" />
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                    <svg className="w-8 h-8 text-violet-700 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <p className="text-xs text-zinc-500">Imagen 3 is redesigning your room</p>
-                    <p className="text-[10px] text-zinc-700">Step 1: Analyzing room → Step 2: Generating image</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Room preview */}
-            {roomPreview && (
-              <div className="p-3 border-b border-zinc-800">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                    Room Preview
-                  </h3>
-                  <div className="flex gap-2">
-                    <span className="text-[10px] text-zinc-600">AI-generated redesign</span>
-                    <button
-                      onClick={() => setRoomPreview(null)}
-                      className="text-zinc-600 hover:text-zinc-400 text-xs"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {uploadedImage && (
-                    <div>
-                      <p className="text-[10px] text-zinc-600 mb-1">Before</p>
-                      <img
-                        src={uploadedImage.previewUrl}
-                        alt="Original room"
-                        className="w-full rounded-lg object-cover aspect-video"
-                      />
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-[10px] text-zinc-600 mb-1">After{styleContext ? ` — ${styleContext}` : ""}</p>
-                    <img
-                      src={`data:${roomPreview.mimeType};base64,${roomPreview.imageBase64}`}
-                      alt="Redesigned room"
-                      className="w-full rounded-lg object-cover aspect-video"
-                    />
-                  </div>
-                </div>
-                {roomPreview.changes && roomPreview.changes.length > 0 && (
-                  <div className="mt-2">
-                    <p className="text-[10px] text-zinc-600 mb-1 uppercase tracking-wider">Changes applied</p>
-                    <ul className="space-y-0.5">
-                      {roomPreview.changes.map((c, i) => (
-                        <li key={i} className="flex items-start gap-1.5 text-[10px] text-zinc-400">
-                          <span className="text-violet-500 mt-0.5">✓</span>
-                          {c}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-            <ProductGallery products={products} onAddToList={handleAddToList} />
-            <ShoppingList items={shoppingList} onRemove={handleRemoveFromList} onClear={handleClearList} />
+        {/* Camera toggle (small, secondary) */}
+        {isConnected && (
+          <div className="flex items-center gap-2 mt-1.5 sm:mt-2 px-1">
+            <button
+              onClick={actions.toggleCamera}
+              className={`flex items-center gap-1.5 text-[11px] sm:text-xs font-medium transition-colors active:scale-95 ${
+                state.isCameraOn
+                  ? "text-primary"
+                  : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+              }`}
+            >
+              <span className="material-symbols-outlined !text-sm">
+                {state.isCameraOn ? "videocam" : "videocam_off"}
+              </span>
+              {state.isCameraOn ? "Camera on" : "Camera off"}
+            </button>
           </div>
         )}
       </div>
-    </main>
+    </div>
+  );
+}
+
+/* ── Error Banner ── */
+
+function ErrorBanner() {
+  const { state, dispatch } = useSession();
+  if (!state.error) return null;
+
+  return (
+    <div className="mx-2 sm:mx-4 mt-2 flex items-start gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/30 rounded-xl text-red-600 dark:text-red-400 text-xs sm:text-sm animate-slide-up">
+      <span className="material-symbols-outlined !text-lg shrink-0 mt-0.5">error</span>
+      <span className="flex-1 line-clamp-3">{state.error}</span>
+      <button onClick={() => dispatch({ type: "SET_ERROR", error: null })} className="text-red-400 hover:text-red-300 shrink-0">
+        <span className="material-symbols-outlined !text-lg">close</span>
+      </button>
+    </div>
+  );
+}
+
+/* ── Active Workspace ── */
+
+function ActiveWorkspace() {
+  const { state, actions } = useSession();
+  const [mobileView, setMobileView] = useState<"chat" | "workspace">("chat");
+
+  const hasVisualContent = !!(
+    state.uploadedImage ||
+    state.currentPreview ||
+    state.referenceImages.length > 0 ||
+    state.searchResults.length > 0 ||
+    state.savedItems.length > 0 ||
+    state.designChoices.some((c) => c.confirmed)
+  );
+
+  return (
+    <>
+      {/* Error banner */}
+      <ErrorBanner />
+
+      {/* Mobile view toggle */}
+      {hasVisualContent && (
+        <div className="flex lg:hidden border-b border-slate-200 dark:border-slate-800 shrink-0 bg-white dark:bg-slate-950">
+          <button
+            onClick={() => setMobileView("chat")}
+            className={`flex-1 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-95 ${
+              mobileView === "chat"
+                ? "border-b-2 border-primary text-primary"
+                : "text-slate-500 dark:text-slate-400"
+            }`}
+          >
+            <span className="material-symbols-outlined !text-base sm:!text-lg">chat</span>
+            Chat
+          </button>
+          <button
+            onClick={() => setMobileView("workspace")}
+            className={`flex-1 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-95 ${
+              mobileView === "workspace"
+                ? "border-b-2 border-primary text-primary"
+                : "text-slate-500 dark:text-slate-400"
+            }`}
+          >
+            <span className="material-symbols-outlined !text-base sm:!text-lg">space_dashboard</span>
+            Room
+          </button>
+        </div>
+      )}
+
+      {/* Desktop: two-panel layout / Mobile: tabbed */}
+      <div className="flex flex-1 overflow-hidden flex-col lg:flex-row min-h-0">
+        {/* Conversation — left on desktop, conditionally shown on mobile */}
+        <div className={`w-full lg:w-[45%] xl:w-[40%] flex flex-col min-h-0 ${
+          mobileView !== "chat" && hasVisualContent ? "hidden lg:flex" : "flex"
+        }`}>
+          <ConversationPanel />
+        </div>
+
+        {/* Visual workspace — right on desktop, conditionally shown on mobile */}
+        <div className={`w-full lg:w-[55%] xl:w-[60%] flex flex-col min-h-0 ${
+          mobileView !== "workspace" && hasVisualContent ? "hidden lg:flex" : !hasVisualContent ? "hidden lg:flex" : "flex"
+        }`}>
+          <VisualWorkspace />
+        </div>
+      </div>
+
+      {/* Camera PiP */}
+      <CameraFeed
+        isActive={state.isCameraOn}
+        onCapture={actions.handleCameraCapture}
+      />
+    </>
+  );
+}
+
+/* ── Main Page ── */
+
+export default function Home() {
+  const { state } = useSession();
+
+  return (
+    <AppShell>
+      {state.sessionPhase === "landing" ? <LandingPage /> : <ActiveWorkspace />}
+    </AppShell>
   );
 }

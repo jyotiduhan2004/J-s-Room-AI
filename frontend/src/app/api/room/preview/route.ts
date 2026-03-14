@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
+export const maxDuration = 60; // seconds
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   const {
     imageBase64,
@@ -109,7 +112,15 @@ Write ONLY the prompt. Start with "The same [room type] from the reference photo
     });
 
   } catch (err: any) {
-    console.error("Room preview error:", err);
-    return NextResponse.json({ error: err.message ?? "Generation failed" }, { status: 500 });
+    console.error("Room preview error:", err?.message || err);
+    const msg = err?.message ?? "Generation failed";
+    // Surface useful error details
+    if (msg.includes("quota") || msg.includes("429")) {
+      return NextResponse.json({ error: "API quota exceeded — please wait and try again" }, { status: 429 });
+    }
+    if (msg.includes("permission") || msg.includes("403")) {
+      return NextResponse.json({ error: "API permission denied — check your API key has Imagen access" }, { status: 403 });
+    }
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

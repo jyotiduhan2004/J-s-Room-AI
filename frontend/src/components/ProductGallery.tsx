@@ -1,5 +1,7 @@
 "use client";
 
+import type { SavedItem } from "@/context/SessionContext";
+
 type Product = {
   title: string;
   price: string;
@@ -11,87 +13,135 @@ type Product = {
 
 type Props = {
   products: Product[];
-  onAddToList: (product: Product) => void;
+  onSave: (product: SavedItem) => void;
+  onUnsave?: (title: string) => void;
+  savedTitles?: Set<string>;
 };
 
-export default function ProductGallery({ products, onAddToList }: Props) {
+function StarRating({ rating }: { rating: number }) {
+  const stars = [];
+  for (let i = 1; i <= 5; i++) {
+    stars.push(
+      <span
+        key={i}
+        className={`text-[10px] sm:text-xs ${i <= Math.round(rating) ? "text-amber-400" : "text-slate-300 dark:text-slate-600"}`}
+      >
+        ★
+      </span>
+    );
+  }
+  return <span className="flex gap-px">{stars}</span>;
+}
+
+export default function ProductGallery({ products, onSave, onUnsave, savedTitles }: Props) {
   if (products.length === 0) return null;
 
   return (
-    <div className="p-3 border-b border-zinc-800">
-      <h3 className="text-xs font-medium text-zinc-400 mb-2 uppercase tracking-wider">
-        Product Results ({products.length})
-      </h3>
-      <div className="grid grid-cols-2 gap-2">
-        {products.map((product, i) => (
-          <div
-            key={i}
-            className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden flex flex-col"
-          >
-            {product.thumbnail && (
-              <div className="aspect-video bg-zinc-800 overflow-hidden">
-                <img
-                  src={product.thumbnail}
-                  alt={product.title}
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              </div>
-            )}
-            <div className="p-2 flex flex-col flex-1 gap-1">
-              <p className="text-xs text-zinc-200 line-clamp-2 leading-tight">
-                {product.title}
-              </p>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {product.price && (
-                  <span className="px-1.5 py-0.5 bg-violet-900/60 text-violet-300 text-[10px] rounded font-medium">
-                    {product.price}
-                  </span>
+    <div className="p-3 sm:p-4 border-b border-slate-200 dark:border-slate-800">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+          Found Products
+        </h4>
+        <span className="text-[10px] sm:text-xs font-medium text-primary">{products.length} Items</span>
+      </div>
+      <div className="space-y-1.5 sm:space-y-2">
+        {products.map((product, i) => {
+          const isSaved = savedTitles?.has(product.title) ?? false;
+          return (
+            <div
+              key={i}
+              className="group flex gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+            >
+              {/* Thumbnail — clickable link */}
+              <a
+                href={product.link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="size-14 sm:size-16 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden shrink-0 block"
+              >
+                {product.thumbnail ? (
+                  <img
+                    src={product.thumbnail}
+                    alt={product.title}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <span className="material-symbols-outlined text-slate-400 dark:text-slate-500 !text-xl sm:!text-2xl">
+                      chair
+                    </span>
+                  </div>
                 )}
-                {product.source && (
-                  <span className="text-[10px] text-zinc-500 truncate">
-                    {product.source}
-                  </span>
-                )}
-              </div>
-              {product.rating && (
-                <div className="flex items-center gap-0.5">
-                  {Array.from({ length: 5 }).map((_, j) => (
-                    <svg
-                      key={j}
-                      className={`w-2.5 h-2.5 ${
-                        j < Math.round(product.rating!) ? "text-yellow-400" : "text-zinc-700"
-                      }`}
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                    </svg>
-                  ))}
+              </a>
+
+              {/* Info */}
+              <div className="flex flex-col justify-between flex-1 min-w-0 py-0.5">
+                <div>
+                  <a
+                    href={product.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs sm:text-sm font-medium text-slate-900 dark:text-white leading-tight line-clamp-2 hover:text-primary transition-colors"
+                  >
+                    {product.title}
+                  </a>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {product.source && (
+                      <p className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">{product.source}</p>
+                    )}
+                    {product.rating && <StarRating rating={product.rating} />}
+                  </div>
                 </div>
-              )}
-              <div className="flex gap-1 mt-auto pt-1">
-                <a
-                  href={product.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 text-center py-1 bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-medium rounded transition-colors"
-                >
-                  Buy Now
-                </a>
-                <button
-                  onClick={() => onAddToList(product)}
-                  className="px-2 py-1 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-[10px] font-medium rounded transition-colors"
-                  title="Add to list"
-                >
-                  + List
-                </button>
+                <div className="flex items-center justify-between mt-1">
+                  {product.price && (
+                    <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white">
+                      {product.price}
+                    </span>
+                  )}
+                  <div className="flex gap-0.5 sm:gap-1 ml-auto">
+                    <a
+                      href={product.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 sm:p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 dark:hover:bg-primary/20 rounded-full transition-colors active:scale-90"
+                      title="Open link"
+                    >
+                      <span className="material-symbols-outlined !text-base sm:!text-lg">open_in_new</span>
+                    </a>
+                    <button
+                      onClick={() => {
+                        if (isSaved) {
+                          onUnsave?.(product.title);
+                        } else {
+                          onSave({
+                            title: product.title,
+                            price: product.price,
+                            source: product.source,
+                            link: product.link,
+                            thumbnail: product.thumbnail,
+                          });
+                        }
+                      }}
+                      className={`p-1 sm:p-1.5 rounded-full transition-colors active:scale-90 ${
+                        isSaved
+                          ? "text-primary bg-primary/10 dark:bg-primary/20"
+                          : "text-slate-400 hover:text-primary hover:bg-primary/10 dark:hover:bg-primary/20"
+                      }`}
+                      title={isSaved ? "Remove from saved" : "Save to list"}
+                    >
+                      <span className="material-symbols-outlined !text-base sm:!text-lg">
+                        {isSaved ? "bookmark" : "bookmark_border"}
+                      </span>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
