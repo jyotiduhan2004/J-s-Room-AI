@@ -50,12 +50,16 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadedImageRef = useRef<{ base64: string; mimeType: string } | null>(null);
+  const transcriptRef = useRef<TranscriptEntry[]>([]);
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const pauseCameraFramesRef = useRef(false);
   const audioRef = useRef<AudioStreamer | null>(null);
   const speakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const latestCameraFrameRef = useRef<{ base64: string; mimeType: string } | null>(null);
+
+  // Keep transcript ref in sync for reconnect context
+  useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
 
   // Session timer
   useEffect(() => {
@@ -163,7 +167,10 @@ export default function Home() {
         onInterrupted: handleInterrupted,
         onConnectionChange: (connected) => {
           setIsConnected(connected);
-          if (connected) setIsCameraOn(true);
+          if (connected) {
+            setIsCameraOn(true);
+            setError(null);
+          }
         },
         onError: (err) => {
           setError(err);
@@ -216,6 +223,7 @@ export default function Home() {
           }
         },
         getUploadedImage: () => uploadedImageRef.current ?? latestCameraFrameRef.current,
+        getTranscript: () => transcriptRef.current,
       });
 
       clientRef.current = client;

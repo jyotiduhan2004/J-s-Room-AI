@@ -25,7 +25,7 @@ Only call generate_room_preview AFTER the user says yes.
 
 REGENERATION RULE: If the user is unhappy with a preview and wants changes, ask what they want to change, then CALL generate_room_preview AGAIN with updated parameters. Never say "generating now" without actually calling the tool.
 
-LAYOUT RULE: The generated image must keep the EXACT same room layout as the original photo — same window position, same wall arrangement, same furniture positions. Only change colors, textures, fabrics, and decorative items. ALWAYS include in keep[]: every fixed element you can clearly see. Only mention elements you can actually see in the room — never assume or guess that something exists (e.g. don't say "keep the AC" if you can't see one).
+LAYOUT RULE: The generated image must keep the EXACT same room layout. NEVER move, remove, or replace furniture unless the user explicitly asked. When you see the room photo, silently note EVERY visible object (bed, cupboard/wardrobe, AC, TV, desk, poster, window, door, shelves). Auto-add ALL of them to keep[]. Only mention elements you can clearly see — never guess.
 
 When calling generate_room_preview, pass ALL confirmed details:
 - changes[]: every specific SURFACE/DECOR change (e.g. "change wall color to warm beige", "add jute rug")
@@ -35,12 +35,14 @@ When calling generate_room_preview, pass ALL confirmed details:
 - ceiling: ceiling decision
 - floor: flooring decision
 - lighting: lighting plan
-- keep[]: ALL fixed elements — furniture positions, AC, TV, PC desk, posters, window side, structural elements
+- keep[]: EVERY visible fixed element — bed, cupboard/wardrobe, AC, TV, PC desk, posters/wall art, window position, door, shelves. Include ALL of them even if user only mentioned some.
+
+BUDGET RULE: When user gives a total budget, use that for all searches. Do NOT ask budget per item. Pass budget to search_products as max_price. User is in India — search for products in INR (Indian Rupees), not USD.
 
 TOOL RULES:
 - Call search_references to show inspiration images for a style.
-- Call search_products when user wants to buy, find items, or asks for prices/shopping links. NEVER quote a price or price range without calling search_products first.
-- Call create_shopping_list ONLY after calling search_products for each item — use the real prices from search results, not estimates.
+- Call search_products when user wants to buy, find items, or asks for prices/shopping links. NEVER quote a price without calling search_products first. Always search in INR.
+- Call create_shopping_list ONLY after calling search_products for each item — use real prices from search results.
 
 Flow: Greet → analyze room → design interview (questions 1-8) → summarize + confirm → generate preview.`;
 
@@ -60,6 +62,7 @@ export type GeminiLiveCallbacks = {
   onError: (error: string) => void;
   onToolResult?: (toolName: string, result: any) => void;
   getUploadedImage?: () => { base64: string; mimeType: string } | null;
+  getTranscript?: () => TranscriptEntry[];
 };
 
 export class GeminiLiveClient {
@@ -68,6 +71,8 @@ export class GeminiLiveClient {
   private callbacks: GeminiLiveCallbacks;
   private isConnected = false;
   private isSpeaking = false;
+  private intentionalDisconnect = false;
+  private isReconnect = false;
   private currentAgentText = "";
   private currentUserText = "";
   private rawMsgCount = 0;
@@ -78,6 +83,7 @@ export class GeminiLiveClient {
   }
 
   async connect() {
+    this.intentionalDisconnect = false;
     try {
       // Capture the real WebSocket before SDK creates it.
       // This lets us: (1) inject transcription config into setup,
@@ -117,12 +123,12 @@ export class GeminiLiveClient {
                     },
                     {
                       name: "search_products",
-                      description: "Search for furniture and home decor products to buy",
+                      description: "Search for furniture and home decor products to buy. Always search in INR for Indian market.",
                       parameters: {
                         type: "object",
                         properties: {
-                          query: { type: "string" },
-                          max_price: { type: "number", description: "Optional max price filter" }
+                          query: { type: "string", description: "Product search query, include 'India' or 'buy online India' for local results" },
+                          max_price: { type: "number", description: "Max price in INR (Indian Rupees)" }
                         },
                         required: ["query"]
                       }
@@ -226,6 +232,13 @@ export class GeminiLiveClient {
             this.isConnected = false;
             this.isSpeaking = false;
             this.callbacks.onConnectionChange(false);
+            // Auto-reconnect on unexpected server disconnect (code 1008)
+            if (e.code === 1008 && !this.intentionalDisconnect) {
+              console.log("Gemini Live: auto-reconnecting in 2s...");
+              this.callbacks.onError("Connection lost — reconnecting...");
+              this.isReconnect = true;
+              setTimeout(() => this.connect(), 2000);
+            }
           },
         },
       });
@@ -242,7 +255,12 @@ export class GeminiLiveClient {
       }
 
       console.log("Session established, setup patched:", setupPatched);
-      this.sendWelcome();
+      if (this.isReconnect) {
+        this.sendContextResume();
+        this.isReconnect = false;
+      } else {
+        this.sendWelcome();
+      }
     } catch (err: any) {
       console.error("Failed to connect:", err);
       this.callbacks.onError(err.message || "Failed to connect to Gemini");
@@ -268,6 +286,46 @@ export class GeminiLiveClient {
       console.log("Welcome prompt sent");
     } catch (e) {
       console.error("Welcome send error:", e);
+    }
+  }
+
+  /** Re-send conversation context after auto-reconnect */
+  private sendContextResume() {
+    if (!this.session || !this.isConnected) return;
+    try {
+      const transcript = this.callbacks.getTranscript?.() ?? [];
+      if (transcript.length === 0) {
+        this.sendWelcome();
+        return;
+      }
+
+      // Build a summary of the conversation so far
+      const lines: string[] = [];
+      for (const entry of transcript) {
+        if (!entry.text.trim()) continue;
+        const role = entry.role === "user" ? "User" : "You (AI)";
+        lines.push(`${role}: ${entry.text}`);
+      }
+      const summary = lines.slice(-20).join("\n"); // last 20 messages max
+
+      // Also re-send the room image if available
+      const uploadedImage = this.callbacks.getUploadedImage?.();
+      const parts: any[] = [];
+      if (uploadedImage) {
+        parts.push({ inlineData: { mimeType: uploadedImage.mimeType, data: uploadedImage.base64 } });
+      }
+      parts.push({ text: `Session reconnected. Here is our conversation so far — continue from where we left off. Do NOT repeat the welcome. Just say "I'm back, let's continue" and pick up naturally.\n\nCONVERSATION HISTORY:\n${summary}` });
+
+      this.session.conn.send(JSON.stringify({
+        clientContent: {
+          turns: [{ role: "user", parts }],
+          turnComplete: true,
+        },
+      }));
+      console.log("Context resume sent with", transcript.length, "messages");
+    } catch (e) {
+      console.error("Context resume error:", e);
+      this.sendWelcome();
     }
   }
 
@@ -515,6 +573,7 @@ export class GeminiLiveClient {
   }
 
   disconnect() {
+    this.intentionalDisconnect = true;
     if (this.session) {
       try { this.session.close(); } catch (_) {}
       this.session = null;
