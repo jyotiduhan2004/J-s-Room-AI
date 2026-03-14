@@ -76,6 +76,7 @@ export class GeminiLiveClient {
   private currentAgentText = "";
   private currentUserText = "";
   private rawMsgCount = 0;
+  public skipWelcome = false;
 
   constructor(apiKey: string, callbacks: GeminiLiveCallbacks) {
     this.client = new GoogleGenAI({ apiKey });
@@ -214,10 +215,14 @@ export class GeminiLiveClient {
         } as any,
         callbacks: {
           onopen: () => {
-            console.log("Gemini Live: connected");
+            console.log("Gemini Live: connected, skipWelcome:", this.skipWelcome);
             this.isConnected = true;
             this.callbacks.onConnectionChange(true);
-            this.callbacks.onTranscriptStream("agent", "Connected! Listening...");
+            // Don't stream "Connected! Listening..." when an image is pending —
+            // it clears the isImageAnalyzing overlay before the image is actually sent
+            if (!this.skipWelcome) {
+              this.callbacks.onTranscriptStream("agent", "Connected! Listening...");
+            }
           },
           onmessage: (msg: LiveServerMessage) => {
             // SDK callback — only used for audio playback (modelTurn.inlineData)
@@ -258,9 +263,10 @@ export class GeminiLiveClient {
       if (this.isReconnect) {
         this.sendContextResume();
         this.isReconnect = false;
-      } else {
+      } else if (!this.skipWelcome) {
         this.sendWelcome();
       }
+      this.skipWelcome = false;
     } catch (err: any) {
       console.error("Failed to connect:", err);
       this.callbacks.onError(err.message || "Failed to connect to Gemini");
@@ -447,7 +453,11 @@ export class GeminiLiveClient {
    * Includes a text instruction so Gemini knows to analyze this specific image.
    */
   sendImageMessage(base64: string, mimeType: string = "image/jpeg") {
-    if (!this.session || !this.isConnected) return;
+    console.log("sendImageMessage called — session:", !!this.session, "connected:", this.isConnected, "base64 length:", base64?.length);
+    if (!this.session || !this.isConnected) {
+      console.error("sendImageMessage ABORTED: session or connection not ready");
+      return;
+    }
     try {
       this.session.conn.send(JSON.stringify({
         clientContent: {
@@ -461,6 +471,7 @@ export class GeminiLiveClient {
           turnComplete: true,
         },
       }));
+      console.log("sendImageMessage SUCCESS — image sent to Gemini");
     } catch (e) {
       console.error("Image message send error:", e);
     }
@@ -504,9 +515,20 @@ export class GeminiLiveClient {
           keep: call.args.keep ?? [],
         }),
       })
-        .then((r) => r.json())
+        .then(async (r) => {
+          if (!r.ok) {
+            const text = await r.text().catch(() => `HTTP ${r.status}`);
+            let errMsg = `Preview failed (${r.status})`;
+            try { errMsg = JSON.parse(text).error || errMsg; } catch {}
+            return { error: errMsg };
+          }
+          return r.json();
+        })
         .then((data) => this.callbacks.onToolResult?.("generate_room_preview_done", data))
-        .catch(() => this.callbacks.onToolResult?.("generate_room_preview_done", { error: "Preview generation failed" }));
+        .catch((err) => {
+          console.error("Preview generation error:", err);
+          this.callbacks.onToolResult?.("generate_room_preview_done", { error: err.message || "Preview generation failed" });
+        });
       return;
     }
 

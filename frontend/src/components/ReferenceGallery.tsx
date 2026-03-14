@@ -22,23 +22,26 @@ export default function ReferenceGallery({ images }: Props) {
 
   return (
     <>
-      <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800">
-        <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">
-          Reference Images
-        </p>
-        <div className="grid grid-cols-3 gap-2">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
+            <span className="material-symbols-outlined !text-lg text-primary">photo_library</span>
+            Style Inspiration
+          </h3>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5 p-3">
           {images.map((img, i) => (
             <button
               key={img.id ?? i}
               onClick={() => setEnlarged(img)}
-              className="group relative aspect-square overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800 hover:ring-2 hover:ring-primary transition-all"
+              className="group relative aspect-square overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800 hover:ring-2 hover:ring-primary transition-all"
             >
               <img
                 src={img.url_small}
                 alt={img.alt}
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               />
-              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent px-1.5 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <p className="text-white text-[9px] truncate">{img.photographer}</p>
               </div>
             </button>
@@ -49,10 +52,13 @@ export default function ReferenceGallery({ images }: Props) {
       {/* Lightbox */}
       {enlarged && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
           onClick={() => setEnlarged(null)}
         >
-          <div className="max-w-2xl w-full" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="max-w-2xl w-full animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <img
               src={enlarged.url_regular}
               alt={enlarged.alt}
@@ -77,7 +83,7 @@ export default function ReferenceGallery({ images }: Props) {
             </p>
             <button
               onClick={() => setEnlarged(null)}
-              className="mt-4 w-full py-2.5 rounded-xl bg-slate-800 text-slate-300 text-sm font-medium hover:bg-slate-700 transition-colors"
+              className="mt-4 w-full py-2.5 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
             >
               Close
             </button>

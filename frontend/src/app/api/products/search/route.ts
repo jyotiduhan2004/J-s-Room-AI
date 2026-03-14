@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "SerpAPI key not configured" }, { status: 500 });
   }
 
-  let serpUrl = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&api_key=${apiKey}`;
+  let serpUrl = `https://serpapi.com/search.json?engine=google_shopping&q=${encodeURIComponent(query)}&gl=in&hl=en&currency=INR&api_key=${apiKey}`;
   if (max_price) serpUrl += `&price_max=${max_price}`;
 
   const res = await fetch(serpUrl);

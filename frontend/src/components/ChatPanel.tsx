@@ -2,95 +2,63 @@
 
 import { useEffect, useRef } from "react";
 import type { TranscriptEntry } from "@/lib/gemini-live";
+import ChatMessage from "./ChatMessage";
 
 type Props = {
   transcript: TranscriptEntry[];
+  isAiTyping?: boolean;
 };
 
-function formatTime(timestamp: number): string {
-  if (!timestamp) return "";
-  return new Date(timestamp).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-export default function ChatPanel({ transcript }: Props) {
+export default function ChatPanel({ transcript, isAiTyping }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [transcript]);
+  }, [transcript, isAiTyping]);
 
-  if (transcript.length === 0) {
+  if (transcript.length === 0 && !isAiTyping) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
-        {/* AI Insight placeholder */}
-        <div className="w-full p-3 rounded-xl bg-primary/10 border border-primary/20">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="material-symbols-outlined !text-base text-primary">lightbulb</span>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
-              AI Insight
-            </span>
-          </div>
-          <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-            Start a session — your AI interior designer will analyze your room and guide you through a redesign.
-          </p>
-        </div>
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
+        <span className="material-symbols-outlined text-slate-300 dark:text-slate-600 !text-5xl">
+          chat_bubble
+        </span>
+        <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xs">
+          Upload a room photo or start talking to begin designing your space
+        </p>
       </div>
     );
   }
 
+  // Determine which message is currently streaming (last agent message with timestamp > 0)
+  const lastIdx = transcript.length - 1;
+  const lastEntry = transcript[lastIdx];
+  const isLastStreaming =
+    lastEntry && lastEntry.role === "agent" && lastEntry.timestamp > 0;
+
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 no-scrollbar">
-      {/* AI Insight card — shown once conversation starts */}
-      <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="material-symbols-outlined !text-base text-primary">lightbulb</span>
-          <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
-            AI Insight
-          </span>
-        </div>
-        <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-          Listening to your space. Ask about styles, colors, or furniture to get started.
-        </p>
-      </div>
+    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 no-scrollbar">
+      {transcript.map((entry, i) => (
+        <ChatMessage
+          key={i}
+          role={entry.role}
+          text={entry.text}
+          timestamp={entry.timestamp}
+          isStreaming={i === lastIdx && isLastStreaming}
+        />
+      ))}
 
-      {/* Messages */}
-      <div className="space-y-4">
-        {transcript.map((entry, i) => (
-          <div
-            key={i}
-            className={`flex flex-col max-w-[85%] ${
-              entry.role === "agent" ? "items-end ml-auto" : "items-start"
-            }`}
-          >
-            {/* Bubble */}
-            <div
-              className={`px-3 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                entry.role === "agent"
-                  ? "bg-primary text-white rounded-tr-none"
-                  : "bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-tl-none"
-              }`}
-            >
-              {entry.text}
-            </div>
-
-            {/* Time + label */}
-            <div className={`flex items-center gap-1 mt-1 ${entry.role === "agent" ? "mr-1" : "ml-1"}`}>
-              {entry.role === "agent" && (
-                <span className="material-symbols-outlined !text-[10px] text-primary">check_circle</span>
-              )}
-              <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-tighter">
-                {entry.role === "agent" ? "AI Assistant" : "You"}
-              </span>
-              {entry.timestamp > 0 && (
-                <span className="text-[10px] text-slate-400">· {formatTime(entry.timestamp)}</span>
-              )}
+      {/* Typing indicator */}
+      {isAiTyping && (
+        <div className="flex items-start animate-slide-up">
+          <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-slate-100 dark:bg-slate-800">
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce-dot-1" />
+              <span className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce-dot-2" />
+              <span className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500 animate-bounce-dot-3" />
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
       <div ref={bottomRef} />
     </div>

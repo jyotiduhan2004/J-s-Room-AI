@@ -8,10 +8,19 @@
 @layer base {
   body {
     font-family: 'Inter', sans-serif;
+    /* Prevent iOS overscroll bounce */
+    overscroll-behavior: none;
   }
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Use dynamic viewport height on mobile for proper 100vh behavior */
+    height: 100dvh;
+  }
+  /* Prevent text size adjustment on orientation change */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 }
 
@@ -45,5 +54,9 @@
     -webkit-font-feature-settings: 'liga';
     -webkit-font-smoothing: antialiased;
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+  /* Prevent touch highlight on mobile buttons */
+  button, a {
+    -webkit-tap-highlight-color: transparent;
   }
 }
